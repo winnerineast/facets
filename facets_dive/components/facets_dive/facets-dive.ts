@@ -92,6 +92,13 @@ export interface FacetsDive extends Element {
   itemPositioningVerticalLabelColor: string;
   itemPositioningHorizontalLabelColor: string;
 
+  /**
+   * Whether to attempt to fill available visualization area when arranging
+   * items into the grid. If missing/false, then the default aspect ratio of 1
+   * (square) will be used.
+   */
+  fitGridAspectRatioToViewport: boolean;
+
   // INTER-COMPONENT WIRING PROPERTIES.
 
   /**
@@ -183,6 +190,25 @@ export interface FacetsDive extends Element {
    */
   selectedData: Array<{}>;
 
+  /**
+   * Indices of data objects to compare against those that are selected. Set
+   * programmatically, influences comparedData.
+   */
+  comparedIndices: number[];
+
+  /**
+   * The currently compared data objects. They should all be elements of the
+   * data array. Changed in response to updates to the comparedIndices.
+   */
+  comparedData: Array<{}>;
+
+  /**
+   * If true then color legend is stable, meaning the color assignments are not
+   * based on the counts of individual values, but on the alphabetical order of
+   * the values.
+   */
+  stableColors: boolean;
+
   // STYLE PROPERTIES.
 
   /**
@@ -199,6 +225,9 @@ export interface FacetsDive extends Element {
    * will be used.
    */
   infoRenderer?: (dataObject: {}, containerElem: Element) => void;
+
+  /** Hides the info card if this is set to true. */
+  hideInfoCard?: boolean;
 }
 
 Polymer({
@@ -260,6 +289,10 @@ Polymer({
     itemPositioningHorizontalLabelColor: {
       type: String,
       value: vis.ITEM_POSITIONING_HORIZONTAL_LABEL_COLOR,
+    },
+    fitGridAspectRatioToViewport: {
+      type: Boolean,
+      value: false,
     },
     verticalFacet: {
       type: String,
@@ -335,6 +368,16 @@ Polymer({
       value: [],
       notify: true,
     },
+    comparedData: {
+      type: Array,
+      value: [],
+      notify: true,
+    },
+    comparedIndices: {
+      type: Array,
+      value: [],
+      notify: true,
+    },
     height: {
       type: Number,
       value: null,
@@ -342,6 +385,14 @@ Polymer({
     },
     infoRenderer: {
       type: Object,  // Function.
+    },
+    hideInfoCard: {
+      type: Boolean,
+      value: false,
+    },
+    stableColors: {
+      type: Boolean,
+      value: false,
     },
   },
 
@@ -355,6 +406,9 @@ Polymer({
     $.zoomInButton.onclick = event => $.vis.zoomIn();
     $.zoomOutButton.onclick = event => $.vis.zoomOut();
 
+    if (this.hideInfoCard) {
+      $.vis.style.right = '0';
+    }
     this._updateHeight();
   },
 

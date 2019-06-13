@@ -26,6 +26,13 @@ message DatasetFeatureStatisticsList {
   repeated DatasetFeatureStatistics datasets = 1;
 }
 
+// A Path is a structured way to identify features, as opposed to flat names.
+message Path {
+  // Any string is a valid step.
+  // However, whenever possible have a step be [A-Za-z0-9_]+.
+  repeated string step = 1;
+}
+
 // The feature statistics for a single dataset.
 message DatasetFeatureStatistics {
   // The name of the dataset.
@@ -51,10 +58,21 @@ message FeatureNameStatistics {
     FLOAT = 1;
     STRING = 2;
     BYTES = 3;
+    STRUCT = 4;
   }
 
-  // The feature name
-  string name = 1;
+  // One can identify a feature either by the name (for simple fields), or by
+  // a path (for structured fields). Note that:
+  // name: "foo"
+  // is equivalent to:
+  // path: {step:"foo"}
+  oneof field_id {
+    // The feature name
+    string name = 1;
+
+    // The path of the feature.
+    Path path = 8;
+  }
 
   // The data type of the feature
   Type type = 2;
@@ -64,6 +82,7 @@ message FeatureNameStatistics {
     NumericStatistics num_stats = 3;
     StringStatistics string_stats = 4;
     BytesStatistics bytes_stats = 5;
+    StructStatistics struct_stats = 7;
   }
 
   // Any custom statistics can be stored in this list.
@@ -95,6 +114,7 @@ message CustomStatistic {
     double num = 2;
     string str = 3;
     Histogram histogram = 4;
+    RankHistogram rank_histogram = 5;
   }
 }
 
@@ -188,6 +208,11 @@ message BytesStatistics {
   float min_num_bytes = 4;
   // The maximum number of bytes in a value
   float max_num_bytes = 5;
+}
+
+// Statistics for a struct feature in a dataset.
+message StructStatistics {
+  CommonStatistics common_stats = 1;
 }
 
 // Common statistics for all feature types

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2017 Google Inc.
+ * Copyright 2018 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@ import {Sprite, SpriteImageData, SpriteMesh} from '../../lib/sprite-mesh';
 import {FieldStats, getAllKeys, getStats} from '../../lib/stats';
 import * as sf from '../../lib/string-format';
 import * as wordtree from '../../lib/wordtree';
+
+declare var THREE: any;
 
 export type Cell = gridlib.Cell;
 export type Grid = gridlib.Grid;
@@ -65,12 +67,52 @@ export const CELL_BACKGROUND_FILL_COLOR = '#f8f8f9';
 /**
  * Color for selected item borders.
  */
-const SELECTED_ITEM_COLOR = '#ff0000';
+const SELECTED_ITEM_COLOR = '#fad411';
+
+/**
+ * Color for stroke around selected item borders.
+ */
+const SELECTED_ITEM_COLOR_STROKE = '#483d06';
 
 /**
  * Stroke width for the selected item borders.
  */
-const SELECTED_ITEM_STROKE_WIDTH = 0.1;
+const SELECTED_ITEM_STROKE_WIDTH = 0.15;
+
+/**
+ * Scale of selected highlight box initially before fade-in.
+ */
+const SELECTED_ITEM_INITIAL_SCALE = 3;
+
+/**
+ * Final scale of selected highlight box after fade-in.
+ */
+const SELECTED_ITEM_FINAL_SCALE = 0.8;
+
+/**
+ * Color for compared item borders.
+ */
+const COMPARED_ITEM_COLOR = '#1d6b1d';
+
+/**
+ * Color for stroke around compared item borders.
+ */
+const COMPARED_ITEM_COLOR_STROKE = '#44ff44';
+
+/**
+ * Stroke width for the compared item borders.
+ */
+const COMPARED_ITEM_STROKE_WIDTH = 0.15;
+
+/**
+ * Scale of compared highlight box initially before fade-in.
+ */
+const COMPARED_ITEM_INITIAL_SCALE = 3;
+
+/**
+ * Final scale of compared highlight box after fade-in.
+ */
+const COMPARED_ITEM_FINAL_SCALE = 0.8;
 
 /**
  * Precision to use for numeric labels in digits.
@@ -294,6 +336,13 @@ const COLOR_BY_MIX = 180;
 const ZOOM_INCREMENT = 1.1;
 
 /**
+ * Certain changes, such as updating the atlasUrl, are expensive enough to
+ * require debouncing. This is the number of milliseconds of time to require
+ * before locking in such a change.
+ */
+const UPDATE_DEBOUNCE_DELAY_MS = 100;
+
+/**
  * A grid item is the marriage of a sprite and its backing data example object.
  */
 interface GridItem {
@@ -378,14 +427,14 @@ export class Label extends BoundedObject {
    * Additional attributes to set for this label. Examples include font-size,
    * text-anchor, x and y (local user-space coordinates).
    */
-  attributes?: {[name: string]: number | string};
+  attributes?: {[name: string]: number|string};
 }
 
 /**
  * Palette object maps a label string onto a color that should be used in
  * any items that match that label.
  */
-export type Palette = Array < {
+export type Palette = Array<{
   /**
    * Key value which maps to this color.
    */
@@ -400,8 +449,7 @@ export type Palette = Array < {
    * Label string and special status to show for this color.
    */
   content: LabelContent;
-}
-> ;
+}>;
 
 type FacetingFunction = (item: GridItem) => (Key|null);
 
@@ -430,7 +478,7 @@ interface FacetingInfo {
 /**
  * External interface for the <facets-dive-vis> Polymer element.
  */
-export interface FacetsDiveVis extends Element {
+export interface FacetsDiveVis extends HTMLElement {
   // DATA PROPERTIES.
 
   /**
@@ -509,6 +557,13 @@ export interface FacetsDiveVis extends Element {
   gridFacetingHorizontalLabelColor: string;
   itemPositioningVerticalLabelColor: string;
   itemPositioningHorizontalLabelColor: string;
+
+  /**
+   * Whether to attempt to fill available visualization area when arranging
+   * items into the grid. If missing/false, then the default aspect ratio of 1
+   * (square) will be used.
+   */
+  fitGridAspectRatioToViewport: boolean;
 
   // USER-INTERACTION PROPERTIES.
 
@@ -589,6 +644,23 @@ export interface FacetsDiveVis extends Element {
   selectedIndices: number[];
 
   /**
+   * Currently compared objects. Should all be elements of the data array.
+   */
+  comparedData: Array<{}>;
+
+  /**
+   * Indices of currently compared objects from the data array.
+   */
+  comparedIndices: number[];
+
+  /**
+   * If true then color legend is stable, meaning the color assignments are not
+   * based on the counts of individual values, but on the alphabetical order of
+   * the values.
+   */
+  stableColors: boolean;
+
+  /**
    * Polymer setter for attribute values.
    */
   // tslint:disable-next-line:no-any TODO(jimbo): Upgrade to typed Polymer.
@@ -662,6 +734,11 @@ class FacetsDiveVizInternal {
   selectedLayer: d3.Selection<SVGGElement, {}, null, undefined>;
 
   /**
+   * D3 selection wrapping the <g> element for compared item borders.
+   */
+  comparedLayer: d3.Selection<SVGGElement, {}, null, undefined>;
+
+  /**
    * Layout object handling fit-to-screen logic.
    */
   layout: Layout;
@@ -716,7 +793,6 @@ class FacetsDiveVizInternal {
 
   /**
    * D3 zoom behavior instance attached to the element for user interaction.
-   * TODO(jimbo): Update this when TypeScript typings catch up to d3 v4.
    */
   zoom: d3.ZoomBehavior<Element, {}>;
 
@@ -741,6 +817,22 @@ class FacetsDiveVizInternal {
    * Horizontal faceting callbacks.
    */
   horizontalFacetInfo: FacetingInfo|null;
+
+  /**
+   * Timer handle returned by setTimeout() for debouncing atlasUrl changes.
+   */
+  atlasUrlChangeTimer: number;
+
+  /**
+   * The last atlas URL that was used.
+   */
+  lastAtlasUrl: string;
+
+  /**
+   * Flag to signal that a change is already being processed, and other
+   * handlers should ignore it.
+   */
+  ignoreChange: boolean;
 
   /**
    * Capture Polymer element instance and prep internal state.
@@ -796,7 +888,7 @@ class FacetsDiveVizInternal {
 
     // Create and attach zoom behavior to element.
     this.zoom =
-        d3.zoom().scaleExtent([.01, 1000]).on('zoom', this.zoomed.bind(this));
+        d3.zoom().scaleExtent([1, 500]).on('zoom', this.zoomed.bind(this));
     d3.select(this.elem).call(this.zoom);
 
     // Insert background SVG used for labels and axes.
@@ -813,8 +905,12 @@ class FacetsDiveVizInternal {
         'class', 'labels');
     this.axesLayer = this.labelsAndAxesSVGRoot.append<SVGGElement>('g').attr(
         'class', 'axes');
-    this.selectedLayer = this.labelsAndAxesSVGRoot.append<SVGGElement>('g')
-        .attr('class', 'selectedboxes');
+    this.comparedLayer =
+        this.labelsAndAxesSVGRoot.append<SVGGElement>('g').attr(
+            'class', 'comparedboxes');
+    this.selectedLayer =
+        this.labelsAndAxesSVGRoot.append<SVGGElement>('g').attr(
+            'class', 'selectedboxes');
 
     // Set up click handler for labels and axes SVG.
     this.labelsAndAxesSVG.on('click', this.clicked.bind(this));
@@ -883,14 +979,42 @@ class FacetsDiveVizInternal {
     for (let i = 0; i < spriteIndexes.length; i++) {
       selectedIndicesSet[spriteIndexes[i]] = true;
     }
-    this.elem.set('selectedIndices', Array.from(Object.keys(selectedIndicesSet)
-      .map(key => +key)));
+    this.elem.set(
+        'selectedIndices',
+        Array.from(Object.keys(selectedIndicesSet).map(key => +key)));
     const selectedData = [];
     for (let i = 0; i < this.elem.selectedIndices.length; i++) {
       selectedData.push(this.elem.data[this.elem.selectedIndices[i]]);
     }
     this.elem.set('selectedData', selectedData);
-    this.updateSelectedBoxes();
+  }
+
+  /**
+   * Update visuals of selected items.
+   */
+  selectedIndicesUpdated() {
+    // Do not update if the mesh hasn't been created. In that case, the visuals
+    // will be updated by the mesh creation itself.
+    if (this.spriteMesh) {
+      this.updateSelectedBoxes();
+    }
+  }
+
+  /**
+   * Update visuals of compared items.
+   */
+  comparedIndicesUpdated() {
+    // Do not update if the mesh hasn't been created. In that case, the visuals
+    // will be updated by the mesh creation itself.
+    if (!this.spriteMesh) {
+      return;
+    }
+    const comparedData = [];
+    for (let i = 0; i < this.elem.comparedIndices.length; i++) {
+      comparedData.push(this.elem.data[this.elem.comparedIndices[i]]);
+    }
+    this.elem.set('comparedData', comparedData);
+    this.updateComparedBoxes();
   }
 
   /**
@@ -899,37 +1023,146 @@ class FacetsDiveVizInternal {
    */
   updateSelectedBoxes() {
     const selectedBoxes: ItemPosition[] =
-      this.elem.selectedIndices.map(index => {
-        return {x: this.spriteMesh.getX(index), y: this.spriteMesh.getY(index)};
-    });
+        this.elem.selectedIndices.map(index => {
+          return {
+            x: this.spriteMesh.getX(index),
+            y: this.spriteMesh.getY(index)
+          };
+        });
 
     // JOIN.
-    const selectedElements = this.selectedLayer.selectAll('.selected').data(
-      selectedBoxes);
+    const selectedElements =
+        this.selectedLayer.selectAll<SVGGElement, ItemPosition>('.selected')
+            .data(selectedBoxes);
 
-    selectedElements
-        // ENTER.
-        .enter()
-        .append('rect')
-        .attr('class', 'selected')
-        .attr('x', (pos: ItemPosition) => pos.x || 0)
-        .attr('y', (pos: ItemPosition) => pos.y || 0)
+    // ENTER.
+    const enterElements = selectedElements.enter()
+                              .append('g')
+                              .classed('selected', true)
+                              .attr(
+                                  'transform',
+                                  (pos: ItemPosition) => {
+                                    const x = 0.5 + (pos.x || 0);
+                                    const y = 0.5 + (pos.y || 0);
+                                    return `translate(${x},${y}) scale(${
+                                        SELECTED_ITEM_INITIAL_SCALE})`;
+                                  })
+                              .style('opacity', 0);
+
+    enterElements.append('rect')
+        .attr('x', -0.5)
+        .attr('y', -0.5)
+        .attr('width', 1)
+        .attr('height', 1)
+        .attr('stroke', SELECTED_ITEM_COLOR_STROKE)
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-opacity', 0)
+        .attr('stroke-width', SELECTED_ITEM_STROKE_WIDTH * 2)
+        .attr('fill-opacity', 0);
+    enterElements.append('rect')
+        .attr('x', -0.5)
+        .attr('y', -0.5)
         .attr('width', 1)
         .attr('height', 1)
         .attr('stroke', SELECTED_ITEM_COLOR)
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-linejoin', 'round')
         .attr('stroke-opacity', 0)
         .attr('stroke-width', SELECTED_ITEM_STROKE_WIDTH)
-        .attr('fill-opacity', 0)
-        // ENTER + UPDATE.
-        .merge(selectedElements)
-        .attr('x', (pos: ItemPosition) => pos.x || 0)
-        .attr('y', (pos: ItemPosition) => pos.y || 0)
-        .attr('width', 1)
-        .attr('height', 1)
+        .attr('fill-opacity', 0);
+
+    // ENTER + UPDATE.
+    const mergedElements = enterElements.merge(selectedElements);
+    mergedElements.transition()
+        .attr(
+            'transform',
+            (pos: ItemPosition) => {
+              const x = 0.5 + (pos.x || 0);
+              const y = 0.5 + (pos.y || 0);
+              return `translate(${x},${y}) scale(${SELECTED_ITEM_FINAL_SCALE})`;
+            })
+        .style('opacity', 1);
+    mergedElements.selectAll('rect')
+        .classed('rotate', true)
         .attr('stroke-opacity', 1);
 
     // EXIT.
-    selectedElements.exit().remove();
+    selectedElements.exit().transition().style('opacity', 0).remove();
+  }
+
+  /**
+   * Update visual appearance of compared items. This code relies heavily on the
+   * D3 join/update/enter/exit pattern.
+   */
+  updateComparedBoxes() {
+    const comparedBoxes: ItemPosition[] =
+        this.elem.comparedIndices.map(index => {
+          return {
+            x: this.spriteMesh.getX(index),
+            y: this.spriteMesh.getY(index)
+          };
+        });
+
+    // JOIN.
+    const comparedElements =
+        this.comparedLayer.selectAll<SVGGElement, ItemPosition>('.compared')
+            .data(comparedBoxes);
+
+    // ENTER.
+    const enterElements = comparedElements.enter()
+                              .append('g')
+                              .classed('compared', true)
+                              .attr(
+                                  'transform',
+                                  (pos: ItemPosition) => {
+                                    const x = 0.5 + (pos.x || 0);
+                                    const y = 0.5 + (pos.y || 0);
+                                    return `translate(${x},${y}) scale(${
+                                        COMPARED_ITEM_INITIAL_SCALE})`;
+                                  })
+                              .style('opacity', 0);
+
+    enterElements.append('rect')
+        .attr('x', -0.5)
+        .attr('y', -0.5)
+        .attr('width', 1)
+        .attr('height', 1)
+        .attr('stroke', COMPARED_ITEM_COLOR_STROKE)
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-opacity', 0)
+        .attr('stroke-width', COMPARED_ITEM_STROKE_WIDTH * 2)
+        .attr('fill-opacity', 0);
+    enterElements.append('rect')
+        .attr('x', -0.5)
+        .attr('y', -0.5)
+        .attr('width', 1)
+        .attr('height', 1)
+        .attr('stroke', COMPARED_ITEM_COLOR)
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-opacity', 0)
+        .attr('stroke-width', COMPARED_ITEM_STROKE_WIDTH)
+        .attr('fill-opacity', 0);
+
+    // ENTER + UPDATE.
+    const mergedElements = enterElements.merge(comparedElements);
+    mergedElements.transition()
+        .attr(
+            'transform',
+            (pos: ItemPosition) => {
+              const x = 0.5 + (pos.x || 0);
+              const y = 0.5 + (pos.y || 0);
+              return `translate(${x},${y}) scale(${COMPARED_ITEM_FINAL_SCALE})`;
+            })
+        .style('opacity', 1);
+    mergedElements.selectAll('rect')
+        .classed('rotate', true)
+        .attr('stroke-opacity', 1);
+
+    // EXIT.
+    comparedElements.exit().transition().style('opacity', 0).remove();
   }
 
   /**
@@ -1244,8 +1477,14 @@ class FacetsDiveVizInternal {
 
     // Format the start and end of range strings.
     const fieldStats = this.stats[this.elem.verticalPosition];
-    const startRange = this.formatNumber(fieldStats.numberMin);
-    const endRange = this.formatNumber(fieldStats.numberMax);
+
+    const [numberMin, numberMax] =
+        d3.scaleLinear()
+            .domain([fieldStats.numberMin, fieldStats.numberMax])
+            .nice()
+            .domain();
+    const startRange = this.formatNumber(numberMin);
+    const endRange = this.formatNumber(numberMax);
 
     // Compute an approximate midpoint to cap the start and end labels.
     const midPoint = (startRange.length + LABEL_LENGTH_PAD) /
@@ -1348,8 +1587,13 @@ class FacetsDiveVizInternal {
 
     // Format the start and end of range strings.
     const fieldStats = this.stats[this.elem.horizontalPosition];
-    const startRange = this.formatNumber(fieldStats.numberMin);
-    const endRange = this.formatNumber(fieldStats.numberMax);
+    const [numberMin, numberMax] =
+        d3.scaleLinear()
+            .domain([fieldStats.numberMin, fieldStats.numberMax])
+            .nice()
+            .domain();
+    const startRange = this.formatNumber(numberMin);
+    const endRange = this.formatNumber(numberMax);
 
     // Compute an approximate midpoint to cap the start and end labels.
     const midPoint = (startRange.length + LABEL_LENGTH_PAD) /
@@ -1458,8 +1702,9 @@ class FacetsDiveVizInternal {
         this.grid.getCells().filter((cell: Cell) => cell.items.length);
 
     // JOIN.
-    const cellElements = this.cellBackgroundLayer.selectAll('.cell').data(
-        cells, (cell: Cell) => cell.compoundKey);
+    const cellElements =
+        this.cellBackgroundLayer.selectAll<SVGRectElement, Cell>('.cell').data(
+            cells, (cell: Cell) => cell.compoundKey);
 
     cellElements
         // ENTER.
@@ -1515,8 +1760,9 @@ class FacetsDiveVizInternal {
     }
 
     // JOIN.
-    const axisElements = this.axesLayer.selectAll('.axis').data(
-        axes, (axis: Axis) => axis.key());
+    const axisElements =
+        this.axesLayer.selectAll<SVGGElement, Axis>('.axis').data(
+            axes, (axis: Axis) => axis.key());
 
     // ENTER.
     const axisElementsEnter = axisElements.enter()
@@ -1689,34 +1935,55 @@ class FacetsDiveVizInternal {
       return;
     }
 
-    // TODO(jimbo): Less hacky way of deferring change handlers for ready?
-    if (!this.scene) {
-      requestAnimationFrame(this.dataChange.bind(this));
-      return;
-    }
-
-    // Keep track of whether this is an update, or a first-run.
-    const update = !!this.spriteMesh;
-
     // Make sure the element's size computations reflect the element boundaries.
     this.resizeHandler();
 
-    // If this is an update, remove the old spriteMesh.
-    if (update) {
-      this.scene.remove(this.spriteMesh);
-      this.spriteMesh.spriteAtlas.clearQueues();  // Stop any outstanding draws.
+    // Produce stats for data.
+    this.stats = getStats(data);
+
+    if (!this.items) {
+      // Since this is the very first time that data is available, select nice
+      // looking fields to color by and render text labels.
+      this.initializeSpriteMesh();
+      this.pickColorByField();
+      this.pickTextDrawingField();
+    } else if (this.items.length !== data.length) {
+      // This is an update in which the number of data points has changed, so
+      // reinitialize the spriteMesh and redraw the image content if any.
+      this.initializeSpriteMesh();
+      this.updateImageFieldName();
+    } else {
+      // Number of data items is unchanged, just update each item's data.
+      for (let i = 0; i < data.length; i++) {
+        this.items[i].data = data[i];
+      }
+    }
+
+    this.updateGridFaceting();
+    this.updateGridItemPositions();
+    this.updateColors();
+  }
+
+  /**
+   * Set up the spriteMesh to accomodate data. This will destroy the existing
+   * spriteMesh if present.
+   */
+  initializeSpriteMesh() {
+    if (this.spriteMesh) {
+      this.scene.remove(this.spriteMesh as any);
+      this.spriteMesh.spriteAtlas.clearQueues();  // Abort outstanding draws.
       delete this.spriteMesh;
     }
 
+    const data = this.elem.data;
+    const itemCount = data.length;
     const spriteImageWidth = this.elem.spriteImageWidth;
     const spriteImageHeight = this.elem.spriteImageHeight;
     const spriteAspectRatio = spriteImageWidth / spriteImageHeight;
 
-    // Create a SpriteMesh to represent the incoming data.
-    const itemCount = data.length;
     this.spriteMesh =
         new SpriteMesh(itemCount, spriteImageWidth, spriteImageHeight);
-    this.scene.add(this.spriteMesh);
+    this.scene.add(this.spriteMesh as any);
     this.spriteMesh.spriteAtlas.onDrawFinished = () => this.queueRenderScene();
 
     // Create items which pair sprites and data, and initialize sprites.
@@ -1746,25 +2013,6 @@ class FacetsDiveVizInternal {
       item.sprite.timestamp = now + this.elem.tweenDuration;
       this.renderUntil(item.sprite.timestamp);
     };
-
-    this.stats = getStats(data);
-
-    this.updateGridFaceting();
-    this.updateGridItemPositions();
-
-    // If a colorBy field hasn't already been specified, pick a good one.
-    if (update) {
-      this.updateColors();
-    } else if (!this.elem.colorBy) {
-      this.pickColorByField();
-    }
-
-    // If an image backing field hasn't already been specified, pick a good one.
-    if (update) {
-      this.updateImageFieldName();
-    } else if (!this.elem.imageFieldName) {
-      this.pickTextDrawingField();
-    }
   }
 
   /**
@@ -1772,12 +2020,6 @@ class FacetsDiveVizInternal {
    */
   filteredDataIndicesChange() {
     const filteredIndices = this.elem.filteredDataIndices;
-
-    // TODO(jimbo): Less hacky way of deferring change handlers for ready?
-    if (!this.scene || !this.items) {
-      requestAnimationFrame(this.filteredDataIndicesChange.bind(this));
-      return;
-    }
 
     const itemVisibility: boolean[] = [];
     if (filteredIndices) {
@@ -1880,36 +2122,60 @@ class FacetsDiveVizInternal {
   }
 
   /**
+   * Queue a change to the atlas URL for debouncing.
+   */
+  queueAtlasUrlChange() {
+    if (this.atlasUrlChangeTimer) {
+      clearTimeout(this.atlasUrlChangeTimer);
+    }
+    this.atlasUrlChangeTimer = setTimeout(() => {
+      if (this.atlasUrlChangeTimer) {
+        this.atlasUrlChange();
+      }
+    }, UPDATE_DEBOUNCE_DELAY_MS);
+  }
+
+  /**
    * Handle changes to sprite texture atlas image URL.
    */
   atlasUrlChange() {
-    const atlasUrl = this.elem.atlasUrl;
-    if (!atlasUrl) {
-      this.pickTextDrawingField();
+    clearTimeout(this.atlasUrlChangeTimer);
+    delete this.atlasUrlChangeTimer;
+
+    // TODO(jimbo): Less hacky way of dealing with out-of-order calls.
+    if (!this.spriteMesh) {
+      requestAnimationFrame(this.atlasUrlChange.bind(this));
       return;
     }
 
-    // TODO(jimbo): Less hacky way of dealing with out-of-order calls.
-    if (this.spriteMesh) {
-      this.spriteMesh.spriteAtlas.setAtlasUrl(
-          atlasUrl, this.elem.crossOrigin, () => {
-            const data = this.elem.data;
-            const now = Date.now();
-            const future = now + this.elem.fadeDuration;
-            for (let i = 0; data && i < data.length; i++) {
-              this.spriteMesh.switchTextures(i, now, future);
-            }
-            this.renderUntil(future);
-
-            this.elem.set('imageFieldName', '');
-            if (this.autoColorBy) {
-              this.autoColorBy = false;
-              this.elem.set('colorBy', '');
-            }
-          });
-    } else {
-      requestAnimationFrame(this.atlasUrlChange.bind(this));
+    const atlasUrl = this.elem.atlasUrl;
+    if (!atlasUrl || !atlasUrl.length || atlasUrl === this.lastAtlasUrl) {
+      // Nothing to do.
+      return;
     }
+    this.lastAtlasUrl = atlasUrl;
+
+    this.resetSpritesToDefaultTexture();
+
+    this.spriteMesh.spriteAtlas.setAtlasUrl(
+        atlasUrl, this.elem.crossOrigin, () => {
+          const data = this.elem.data;
+          const now = Date.now();
+          const future = now + this.elem.fadeDuration;
+          for (let i = 0; data && i < data.length; i++) {
+            this.spriteMesh.switchTextures(i, now, future);
+          }
+          this.renderUntil(future);
+
+          this.ignoreChange = true;
+          this.elem.set('imageFieldName', '');
+          delete this.ignoreChange;
+
+          if (this.autoColorBy) {
+            this.autoColorBy = false;
+            this.elem.set('colorBy', '');
+          }
+        });
   }
 
   /**
@@ -1978,6 +2244,14 @@ class FacetsDiveVizInternal {
     this.grid.horizontalFacet = horizontalFacetInfo.facetingFunction;
     this.grid.horizontalKeyCompare = horizontalFacetInfo.keyCompareFunction;
 
+    if (this.elem.fitGridAspectRatioToViewport) {
+      const rect = this.elem.getBoundingClientRect();
+      this.grid.targetGridAspectRatio =
+          rect && rect.width && rect.height ? rect.width / rect.height || 1 : 1;
+    } else {
+      this.grid.targetGridAspectRatio = 1;
+    }
+
     this.grid.arrange();
 
     this.updateCellBackgrounds();
@@ -1987,6 +2261,7 @@ class FacetsDiveVizInternal {
     this.updateLabels();
 
     this.updateSelectedBoxes();
+    this.updateComparedBoxes();
 
     this.fitToViewport();
   }
@@ -2097,6 +2372,7 @@ class FacetsDiveVizInternal {
     this.updateAxes();
     this.updateLabels();
     this.updateSelectedBoxes();
+    this.updateComparedBoxes();
 
     this.fitToViewport();
   }
@@ -2129,9 +2405,9 @@ class FacetsDiveVizInternal {
 
     const nanColor = d3.rgb(PALETTE_NUMERIC.missing);
     const scale = d3.scaleLinear<string>();
-    scale.domain([fieldStats.numberMin!, fieldStats.numberMax!]).range([
-      PALETTE_NUMERIC.start, PALETTE_NUMERIC.end
-    ]);
+    scale.domain([fieldStats.numberMin!, fieldStats.numberMax!])
+        .range([PALETTE_NUMERIC.start, PALETTE_NUMERIC.end])
+        .nice();
 
     // Determine colors for items to be returned.
     const colors: d3.RGBColor[] = [];
@@ -2224,9 +2500,13 @@ class FacetsDiveVizInternal {
 
     // Sort the unique values of this field, higest count first.
     const hashKeys = Object.keys(fieldStats.valueHash);
-    hashKeys.sort(
-        (a: string, b: string): number =>
-            fieldStats.valueHash[b].count - fieldStats.valueHash[a].count);
+    if (this.elem.stableColors) {
+      hashKeys.sort();
+    } else {
+      hashKeys.sort(
+          (a: string, b: string): number =>
+              fieldStats.valueHash[b].count - fieldStats.valueHash[a].count);
+    }
 
     const buckets = Math.min(paletteSource.length, hashKeys.length);
 
@@ -2409,14 +2689,10 @@ class FacetsDiveVizInternal {
   }
 
   /**
-   * When the selected field for rendering text has changed, start jobs to
-   * render the text.
+   * Cancel any outstanding queued atlas draw jobs and transition sprites back
+   * to the default texture.
    */
-  updateImageFieldName() {
-    if (!this.grid) {
-      return;
-    }
-
+  resetSpritesToDefaultTexture() {
     const items = this.grid.items as GridItem[];
 
     // Cancel any outstanding queued draw jobs.
@@ -2432,16 +2708,33 @@ class FacetsDiveVizInternal {
       }
     }
     this.renderUntil(future);
+  }
+
+  /**
+   * When the selected field for rendering text has changed, start jobs to
+   * render the text.
+   */
+  updateImageFieldName() {
+    if (this.ignoreChange || !this.grid) {
+      return;
+    }
+
+    this.resetSpritesToDefaultTexture();
 
     // Short-circuit and default to atlas image if a field hasn't been selected.
     const imageFieldName = this.elem.imageFieldName;
     if (!(imageFieldName in this.stats)) {
+      // Forget any previously set atlas URL since it would need to be redrawn.
+      delete this.lastAtlasUrl;
+
       // Treat default image field as an atlas URL change.
-      this.atlasUrlChange();
+      this.queueAtlasUrlChange();
+
       return;
     }
 
     // Queue a draw job for each sprite.
+    const items = this.grid.items as GridItem[];
     for (let i = 0; i < items.length; i++) {
       const {sprite, data} = items[i];
 
@@ -2473,10 +2766,13 @@ class FacetsDiveVizInternal {
     if (!fieldStats || !fieldStats.isNumeric()) {
       return null;
     }
-    const range = fieldStats.numberMax! - fieldStats.numberMin!;
+    // Use D3's nice() method to round the min and max to pleasing values.
+    const scale = d3.scaleLinear()
+                      .domain([fieldStats.numberMin, fieldStats.numberMax])
+                      .nice();
+
     return (item: GridItem, index: number, cell: Cell, grid: Grid) =>
-               ((item.data[fieldName] as number) - fieldStats.numberMin!) /
-        range;
+               scale(item.data[fieldName] as number);
   }
 
   /**
@@ -2487,11 +2783,11 @@ class FacetsDiveVizInternal {
   generateFacetingInfo(
       fieldName: string, buckets: number, bagOfWords: boolean,
       vertical: boolean): FacetingInfo {
-    // For unknown fields (including empty string), just lump everything
-    // together into the null bucket.
-    if (!(fieldName in this.stats)) {
+    // For unknown fields (including empty string), or if the number of buckets
+    // doesn't make sense, just lump everything together into a nameless bucket.
+    if (!(fieldName in this.stats) || isNaN(+buckets) || +buckets < 1) {
       return {
-        facetingFunction: item => null!,
+        facetingFunction: item => '',
         keyCompareFunction: (a: Key, b: Key) => 0,
         labelingFunction: DEFAULT_LABELING_FUNCTION,
       };
@@ -2662,7 +2958,29 @@ class FacetsDiveVizInternal {
   generateNumericFacetingInfo(fieldName: string, buckets: number):
       FacetingInfo {
     const fieldStats = this.stats[fieldName];
-    const denom = fieldStats.numberMax! - fieldStats.numberMin!;
+
+    // Use D3's nice() method to round the min and max to pleasing values.
+    const [numberMin, numberMax] =
+        d3.scaleLinear()
+            .domain([fieldStats.numberMin, fieldStats.numberMax])
+            .nice()
+            .domain();
+
+    const range = numberMax - numberMin;
+
+    let precision = 1;
+    for (let key = 0; key < buckets; key++) {
+      const lowIndex = key as number;
+      const highIndex = 1 + lowIndex;
+      const lowValue = lowIndex / buckets * range + numberMin;
+      const highValue = highIndex / buckets * range + numberMin;
+      if (lowValue !== highValue) {
+        precision = Math.max(
+            precision,
+            this.computeMinimumPrecision(lowValue, highValue, precision));
+      }
+    }
+
     return {
       /**
        * Numeric faceting consists of dividing the available range into the
@@ -2681,8 +2999,8 @@ class FacetsDiveVizInternal {
         if (isNaN(x)) {
           return x;
         }
-        const diff = x - fieldStats.numberMin!;
-        return Math.min(Math.floor(buckets * diff / denom), buckets - 1);
+        const diff = x - numberMin;
+        return Math.min(Math.floor(buckets * diff / range), buckets - 1);
       },
 
       keyCompareFunction: sorting.numberCompare,
@@ -2697,18 +3015,18 @@ class FacetsDiveVizInternal {
         }
         const lowIndex = key as number;
         const highIndex = 1 + lowIndex;
-        const range = fieldStats.numberMax! - fieldStats.numberMin!;
-        const lowValue = lowIndex / buckets * range + fieldStats.numberMin!;
-        const highValue = highIndex / buckets * range + fieldStats.numberMin!;
+        const lowValue = lowIndex / buckets * range + numberMin;
+        const highValue = highIndex / buckets * range + numberMin;
 
         // Bucket range labels should round to the nearest whole number if all
         // numeric values are integers.
         if (fieldStats.isInteger()) {
           return {
-            label: this.formatRange(Math.ceil(lowValue), Math.floor(highValue))
+            label: this.formatRange(
+                Math.ceil(lowValue), Math.floor(highValue), precision)
           };
         }
-        return {label: this.formatRange(lowValue, highValue)};
+        return {label: this.formatRange(lowValue, highValue, precision)};
       },
     };
   }
@@ -2716,21 +3034,42 @@ class FacetsDiveVizInternal {
   /**
    * Given a number used in a label, format it to a string.
    */
-  formatNumber(num: number|null): string {
+  formatNumber(num: number|null, precision = DEFAULT_NUMERIC_LABEL_PRECISION):
+      string {
     if (num === null) {
       return 'null';
     }
-    num = parseFloat(num.toPrecision(DEFAULT_NUMERIC_LABEL_PRECISION));
-    return Math.abs(num) >= 1000 ? d3.format('s')(num) : '' + num;
+    num = parseFloat(num.toPrecision(precision));
+    return Math.abs(num) >= 1000 ? d3.format(`.${precision}s`)(num) : `${num}`;
+  }
+
+  /**
+   * Given two numbers, compute the minimum precision necessary to distinguish
+   * them, greater than or equal to the starting precision value.
+   */
+  computeMinimumPrecision(low: number, high: number, start = 1) {
+    let precision = start;
+    // 100 is the maximum precision value allowed by browsers.
+    while (precision <= 100 &&
+           low.toPrecision(precision) === high.toPrecision(precision)) {
+      precision++;
+    }
+    return precision;
   }
 
   /**
    * Given a pair of low and high bounds, create a label string to describe
    * the range.
    */
-  formatRange(low: number, high: number) {
+  formatRange(
+      low: number, high: number, precision = DEFAULT_NUMERIC_LABEL_PRECISION) {
+    if (low === high) {
+      return this.formatNumber(low, precision);
+    }
+    precision = this.computeMinimumPrecision(low, high, precision);
     // U+2014 is the unicode symbol for an emdash.
-    return `${this.formatNumber(low)} \u2014 ${this.formatNumber(high)}`;
+    return `${this.formatNumber(low, precision)} \u2014 ${
+        this.formatNumber(high, precision)}`;
   }
 
   /**
@@ -2838,7 +3177,7 @@ Polymer({
     atlasUrl: {
       type: String,
       value: null,
-      observer: '_atlasUrlChange',
+      observer: '_queueAtlasUrlChange',
     },
     spriteUrl: {
       type: String,
@@ -2896,6 +3235,10 @@ Polymer({
     itemPositioningHorizontalLabelColor: {
       type: String,
       value: ITEM_POSITIONING_HORIZONTAL_LABEL_COLOR,
+    },
+    fitGridAspectRatioToViewport: {
+      type: Boolean,
+      value: false,
     },
     verticalFacet: {
       type: String,
@@ -2973,6 +3316,23 @@ Polymer({
       type: Array,
       value: [],
       notify: true,
+      observer: '_selectedIndicesUpdated',
+    },
+    comparedData: {
+      type: Array,
+      value: [],
+      notify: true,
+    },
+    comparedIndices: {
+      type: Array,
+      value: [],
+      notify: true,
+      observer: '_comparedIndicesUpdated',
+    },
+    stableColors: {
+      type: Boolean,
+      value: false,
+      observer: '_updateColors',
     },
   },
 
@@ -2987,19 +3347,30 @@ Polymer({
   },
 
   _dataChange(this: any, data: DataExample[]) {
+    // TODO(jimbo): Less hacky way of deferring change handlers for ready?
+    if (!this._backing.scene) {
+      requestAnimationFrame(this._dataChange.bind(this, data));
+      return;
+    }
     this._backing.dataChange();
     this._setKeys(this._backing.getKeys());
     this._setStats(this._backing.stats);
   },
 
   _filteredDataIndicesChange(this: any, filteredDataIndices: number[]) {
+    // TODO(jimbo): Less hacky way of deferring change handlers for ready?
+    if (!this._backing.scene || !this._backing.items) {
+      requestAnimationFrame(
+          this._filteredDataIndicesChange.bind(this, filteredDataIndices));
+      return;
+    }
     this._backing.filteredDataIndicesChange();
     this._setKeys(this._backing.getKeys());
     this._setStats(this._backing.stats);
   },
 
-  _atlasUrlChange(this: any, atlasUrl: string) {
-    this._backing.atlasUrlChange();
+  _queueAtlasUrlChange(this: any, atlasUrl: string) {
+    this._backing.queueAtlasUrlChange();
   },
 
   _spriteUrlChange(this: any, spriteUrl: string) {
@@ -3024,6 +3395,14 @@ Polymer({
 
   _onIronResize(this: any) {
     this._backing.resizeHandler();
+  },
+
+  _selectedIndicesUpdated(this: any) {
+    this._backing.selectedIndicesUpdated();
+  },
+
+  _comparedIndicesUpdated(this: any) {
+    this._backing.comparedIndicesUpdated();
   },
 
   // Public non-Polymer methods.

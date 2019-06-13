@@ -1,7 +1,10 @@
-package(default_visibility = ["//visibility:public"])
+package(
+    default_testonly = True,
+    default_visibility = ["//visibility:public"],
+)
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_js_library")
-load("@org_tensorflow_tensorboard//tensorboard/defs:web.bzl", "ts_web_library")
+load("@org_tensorflow_tensorboard//tensorboard/defs:web.bzl", "tf_web_library")
 
 licenses(["notice"])  # Apache 2.0
 
@@ -10,7 +13,7 @@ closure_js_library(
     srcs = ["externs.js"],
 )
 
-ts_web_library(
+tf_web_library(
     name = "test_helpers",
     srcs = [
         "test_helpers.ts",
@@ -24,12 +27,12 @@ ts_web_library(
         "proto.featureStatistics.StringStatistics",
         "proto.featureStatistics.CommonStatistics",
         "proto.featureStatistics.Histogram",
-        "proto.featureStatistics.RankHistogram"
+        "proto.featureStatistics.RankHistogram",
     ],
     path = "/facets-overview/functional-tests/test_helpers",
     deps = [
         ":externs",
-        "//facets_overview/proto",
         "//facets_overview/common",
-    ]
+        "//facets_overview/proto:feature_statistics_closure_proto",
+    ],
 )

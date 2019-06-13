@@ -21,6 +21,7 @@ import DatasetFeatureStatistics from 'goog:proto.featureStatistics.DatasetFeatur
 import DatasetFeatureStatisticsList from 'goog:proto.featureStatistics.DatasetFeatureStatisticsList';
 import NumericStatistics from 'goog:proto.featureStatistics.NumericStatistics';
 import StringStatistics from 'goog:proto.featureStatistics.StringStatistics';
+import StructStatistics from 'goog:proto.featureStatistics.StructStatistics';
 import FeatureNameStatistics from 'goog:proto.featureStatistics.FeatureNameStatistics';
 import Histogram from 'goog:proto.featureStatistics.Histogram';
 import RankHistogram from 'goog:proto.featureStatistics.RankHistogram';
@@ -690,6 +691,18 @@ describe('getRatioMissingAndZero', () => {
     expect(utils.getRatioMissingAndZero(feature)).to.equal(.1);
   });
 
+  it('can handle struct stats', () => {
+    const feature = new FeatureNameStatistics();
+    const stats = new StructStatistics();
+    feature.setStructStats(stats);
+    const commonStats = new CommonStatistics();
+    stats.setCommonStats(commonStats);
+    commonStats.setNumMissing(10);
+    commonStats.setNumNonMissing(90);
+
+    expect(utils.getRatioMissingAndZero(feature)).to.equal(.1);
+  });
+
   it('can handle string stats', () => {
     const feature = new FeatureNameStatistics();
     const stats = new StringStatistics();
@@ -747,6 +760,11 @@ describe('stringFromFeatureType', () => {
       .to.equal('binary');
   });
 
+  it('returns struct if given STRUCT', () => {
+    expect(utils.stringFromFeatureType(FeatureNameStatistics.Type.STRUCT))
+      .to.equal('struct');
+  });
+
   it('returns unknown if given other value', () => {
     expect(utils.stringFromFeatureType(123))
       .to.equal('unknown');
@@ -779,6 +797,8 @@ describe('isFeatureTypeNumeric', () => {
     expect(utils.isFeatureTypeNumeric(FeatureNameStatistics.Type.STRING))
       .to.be.false;
     expect(utils.isFeatureTypeNumeric(FeatureNameStatistics.Type.BYTES))
+      .to.be.false;
+    expect(utils.isFeatureTypeNumeric(FeatureNameStatistics.Type.STRUCT))
       .to.be.false;
   });
 });
@@ -1233,6 +1253,16 @@ describe('getSpecFromFeatureStats', () => {
     expect(utils.getSpecFromFeatureStats(
       FeatureNameStatistics.Type.BYTES, common)).to.equal(utils.FS_SCALAR_BYTES);
   });
+
+  it('returns fixed length struct', () => {
+    const common = new CommonStatistics();
+    common.setNumNonMissing(10);
+    common.setMinNumValues(2);
+    common.setMaxNumValues(2);
+    expect(utils.getSpecFromFeatureStats(
+      FeatureNameStatistics.Type.STRUCT, common)).to.equal(
+        utils.FS_FIXED_LEN_STRUCT);
+  });
 });
 
 describe('updateSpec', () => {
@@ -1283,8 +1313,8 @@ describe('determineChartTypeForData', () => {
 
   it('returns histogram for no data', () => {
     const h = new utils.HistogramForDataset('test', null);
-    expect(utils.determineChartTypeForData([h], 2)).to.equal(
-      utils.ChartType.HISTOGRAM);
+    expect(utils.determineChartTypeForData([h], utils.CHART_SELECTION_STANDARD,
+        2)).to.equal(utils.ChartType.HISTOGRAM);
   });
 
   it('returns histogram for numbers', () => {
@@ -1301,8 +1331,8 @@ describe('determineChartTypeForData', () => {
     b.setSampleCount(20);
     buckets.push(b);
     const h = new utils.HistogramForDataset('test', hist);
-    expect(utils.determineChartTypeForData([h], 2)).to.equal(
-      utils.ChartType.HISTOGRAM);
+    expect(utils.determineChartTypeForData([h], utils.CHART_SELECTION_STANDARD,
+        2)).to.equal(utils.ChartType.HISTOGRAM);
   });
 
   it('returns bar chart for small amount of strings', () => {
@@ -1310,8 +1340,8 @@ describe('determineChartTypeForData', () => {
     const buckets = hist.getBucketsList();
     buckets.push.apply(buckets, rankBuckets);
     const h = new utils.HistogramForDataset('test', hist);
-    expect(utils.determineChartTypeForData([h], 2)).to.equal(
-      utils.ChartType.BAR_CHART);
+    expect(utils.determineChartTypeForData([h], utils.CHART_SELECTION_STANDARD,
+        2)).to.equal(utils.ChartType.BAR_CHART);
   });
 
   it('returns CDF for large amount of strings', () => {
@@ -1319,8 +1349,8 @@ describe('determineChartTypeForData', () => {
     const buckets = hist.getBucketsList();
     buckets.push.apply(buckets, rankBuckets);
     const h = new utils.HistogramForDataset('test', hist);
-    expect(utils.determineChartTypeForData([h], 1)).to.equal(
-      utils.ChartType.CUMDIST_CHART);
+    expect(utils.determineChartTypeForData([h], utils.CHART_SELECTION_STANDARD,
+        1)).to.equal(utils.ChartType.CUMDIST_CHART);
   });
 });
 
@@ -1530,7 +1560,7 @@ describe('formatFloatWithClass', () => {
   it('uses B for billions', () => {
     const s = utils.formatFloatWithClass(14000000000.22222);
     expect(s.str).to.equal('14.0B');
-    expect(s.fullStr).to.equal('14,000,000,000.2222');
+    expect(s.fullStr).to.equal('14,000,000,000.22222');
     expect(s.cssClass).to.equal('');
   });
 

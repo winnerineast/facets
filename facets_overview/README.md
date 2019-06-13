@@ -39,6 +39,11 @@ import pandas as pd
 df =  pd.DataFrame({'num' : [1, 2, 3, 4], 'str' : ['a', 'a', 'b', None]})
 proto = GenericFeatureStatisticsGenerator().ProtoFromDataFrames([{'name': 'test', 'table': df}])
 ```
+
+## Large Datasets
+
+The python code in this repository for generating feature stats only works on datasets that are small enough to fit into memory on your local machine. For distributed generation of feature stats for large datasets, check out the independently-developed [Facets Overview Spark project](https://github.com/gopro/facets-overview-spark).
+
 # Visualization
 
 A proto can easily be visualized in a Jupyter notebook using the installed nbextension.
@@ -84,6 +89,7 @@ The sort-by dropdown changes the sort order for the features in each table. The 
 * Distribution distance (only available when comparing multiple datasets): Ordered by the largest difference between distribution shapes for each feature (using chi-square test for shape).
 
 The name filter input box allows filtering the tables by feature names that match the text provided.
+The currently-set filter is exposed as the property `searchString`.
 
 The feature checkboxes allow filtering by the type of value for each feature, such as float, int or string.
 

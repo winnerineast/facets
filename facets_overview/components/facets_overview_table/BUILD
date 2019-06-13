@@ -1,14 +1,14 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@org_tensorflow_tensorboard//tensorboard/defs:web.bzl", "ts_web_library")
+load("@org_tensorflow_tensorboard//tensorboard/defs:web.bzl", "tf_web_library")
 
 licenses(["notice"])  # Apache 2.0
 
-ts_web_library(
+tf_web_library(
     name = "facets_overview_table",
     srcs = [
         "facets-overview-table.html",
-        "facets-overview-table.ts"
+        "facets-overview-table.ts",
     ],
     clutz_entry_points = [
         "proto.featureStatistics.DatasetFeatureStatistics",
@@ -18,15 +18,15 @@ ts_web_library(
         "proto.featureStatistics.StringStatistics",
         "proto.featureStatistics.CommonStatistics",
         "proto.featureStatistics.Histogram",
-        "proto.featureStatistics.RankHistogram"
+        "proto.featureStatistics.RankHistogram",
     ],
     path = "/facets-overview/components/facets-overview-table",
     deps = [
-        "//facets_overview/proto",
         "//facets_overview/common",
         "//facets_overview/components/facets_overview_chart",
         "//facets_overview/components/facets_overview_row_legend",
         "//facets_overview/components/facets_overview_row_stats",
+        "//facets_overview/proto:feature_statistics_closure_proto",
         "@org_polymer_iron_list",
         "@org_polymer_paper_dropdown_menu",
         "@org_polymer_paper_item",
@@ -35,4 +35,3 @@ ts_web_library(
         "@org_tensorflow_tensorboard//tensorboard/components/tf_imports:polymer",
     ],
 )
-

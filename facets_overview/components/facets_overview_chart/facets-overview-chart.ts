@@ -113,7 +113,8 @@ Polymer({
     const chartBuckets =
         chartData.map(d => this._getBuckets(d, showWeighted, chartSelection));
     this._chartType =
-        utils.determineChartTypeForData(chartData, this._maxBucketsForBarChart);
+        utils.determineChartTypeForData(chartData, chartSelection,
+        this._maxBucketsForBarChart);
     const names = chartData.map(d => d.name);
     if (chartSelection === utils.CHART_SELECTION_LIST_QUANTILES ||
         chartSelection ===
@@ -147,7 +148,8 @@ Polymer({
       chartData = utils.convertToPercentage(chartData);
     }
     chartData.forEach((buckets, i) => {
-      buckets.forEach((b: Histogram.Bucket) => {
+      buckets.forEach((genericBucket: utils.GenericHistogramBucket) => {
+        const b = genericBucket as Histogram.Bucket;
         const low = utils.getNumberFromField(b.getLowValue());
         const high = utils.getNumberFromField(b.getHighValue());
         const count = utils.getNumberFromField(b.getSampleCount());
@@ -228,10 +230,10 @@ Polymer({
           }
         }
         return x;
-      }, xScale)
+      })
       .y(() => 0, yScale)
       .y2((d: Histogram.Bucket) =>
-          this._getCountWithFloor(d, maxCount, logScale), yScale);
+          this._getCountWithFloor(d, maxCount, logScale));
 
     // Set the rectangle attributes.
     bars.attr(
@@ -300,21 +302,24 @@ Polymer({
     chartData.forEach((buckets, datasetIndex) => {
       const quantiles: utils.QuantileInfo[] = [];
       const numQuantiles = buckets.length;
-      buckets.forEach((b: Histogram.Bucket, quantileIndex: number) => {
-        const low = utils.getNumberFromField(b.getLowValue());
-        const high = utils.getNumberFromField(b.getHighValue());
-        if (low < min) {
-          min = low;
-        }
-        if (high > max) {
-          max = high;
-        }
-        const quantile = new utils.QuantileInfo();
-        quantile.bucket = b;
-        quantile.datasetIndex = datasetIndex;
-        quantile.quantile = quantileIndex * 100 / numQuantiles;
-        quantiles.push(quantile);
-      });
+      buckets.forEach(
+          (genericBucket: utils.GenericHistogramBucket,
+           quantileIndex: number) => {
+            const b = genericBucket as Histogram.Bucket;
+            const low = utils.getNumberFromField(b.getLowValue());
+            const high = utils.getNumberFromField(b.getHighValue());
+            if (low < min) {
+              min = low;
+            }
+            if (high > max) {
+              max = high;
+            }
+            const quantile = new utils.QuantileInfo();
+            quantile.bucket = b;
+            quantile.datasetIndex = datasetIndex;
+            quantile.quantile = quantileIndex * 100 / numQuantiles;
+            quantiles.push(quantile);
+          });
       // Add a final bucket to represent the 100% quantile point.
       if (buckets.length > 0) {
         const lastBucket = new Histogram.Bucket();
@@ -430,7 +435,8 @@ Polymer({
     }
     let maxCount = 0;
     const chartDataBuckets = chartData.map((buckets, datasetIndex) => {
-      buckets.forEach((b: Histogram.Bucket) => {
+      buckets.forEach((genericBucket: utils.GenericHistogramBucket) => {
+        const b = genericBucket as Histogram.Bucket;
         const count = utils.getNumberFromField(b.getSampleCount());
         if (count > maxCount) {
           maxCount = count;
@@ -535,22 +541,28 @@ Polymer({
           const rawBuckets: utils.GenericHistogramBucket[] = [];
           const sortBuckets: utils.GenericHistogramBucket[] = [];
           let lastIndex = -1;
-          buckets.forEach((inner: RankHistogram.Bucket, j: number) => {
-            const percBucket = inner.cloneMessage() as RankHistogram.Bucket;
-            sortBuckets.push(percBucket);
-          });
+          buckets.forEach(
+            (genericBucket: utils.GenericHistogramBucket, j: number) => {
+              const inner = genericBucket as RankHistogram.Bucket;
+              const percBucket = inner.cloneMessage() as RankHistogram.Bucket;
+              sortBuckets.push(percBucket);
+            });
           // No need to sort the first dataset as the X axis starts with all
           // elements in the first dataset in order of their appearance in its
           // rank histogram.
           if (i > 0) {
             sortBuckets.sort(
-              (a: RankHistogram.Bucket, b: RankHistogram.Bucket) => {
+              (genericBucketA: utils.GenericHistogramBucket,
+               genericBucketB: utils.GenericHistogramBucket) => {
+                const a = genericBucketA as RankHistogram.Bucket;
+                const b = genericBucketB as RankHistogram.Bucket;
                 return labelDict[utils.getPrintableLabel(a.getLabel())] -
-                  labelDict[utils.getPrintableLabel(b.getLabel())];
+                    labelDict[utils.getPrintableLabel(b.getLabel())];
               });
           }
           sortBuckets.forEach(
-              (percBucket: RankHistogram.Bucket, j: number) => {
+              (genericBucket: utils.GenericHistogramBucket, j: number) => {
+                const percBucket = genericBucket as RankHistogram.Bucket;
                 const indexOfBucketLabel =
                     labelDict[utils.getPrintableLabel(percBucket.getLabel())];
                 // If the next element on the X axis is not in this dataset,

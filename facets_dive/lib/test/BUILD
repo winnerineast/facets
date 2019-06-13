@@ -4,7 +4,7 @@ package(
 )
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_js_library")
-load("@org_tensorflow_tensorboard//tensorboard/defs:web.bzl", "ts_web_library")
+load("@org_tensorflow_tensorboard//tensorboard/defs:web.bzl", "tf_web_library")
 load("@org_tensorflow_tensorboard//tensorboard/defs:vulcanize.bzl", "tensorboard_html_binary")
 
 licenses(["notice"])  # Apache 2.0
@@ -14,7 +14,7 @@ closure_js_library(
     srcs = ["externs.js"],
 )
 
-ts_web_library(
+tf_web_library(
     name = "test",
     srcs = [
         "axis_test.ts",
@@ -48,8 +48,20 @@ ts_web_library(
     ],
 )
 
+# Compiles standalone HTML file that tests facets-dive libs.
+#
+#   $ bazel run //facets_dive/lib/test:devserver
+#   $ google-chrome http://localhost:6006/facets-dive/lib/test/runner.html
+#
+# NOTE: Test output is logged to Chrome's Ctrl+Shift+J console.
+# NOTE: This runs TensorBoard Vulcanize.java to inline HTML imports and
+#       runs the Closure Compiler on the JavaScript outputted by the
+#       TypeScript Compiler, in order to remove ES6 imports, which don't
+#       work in web browsers. Otherwise we'd `bazel run` tf_web_library.
 tensorboard_html_binary(
     name = "devserver",
+    testonly = True,  # Keeps JavaScript somewhat readable
+    compile = True,  # Run Closure Compiler
     input_path = "/facets-dive/lib/test/test.html",
     output_path = "/facets-dive/lib/test/runner.html",
     deps = [":test"],

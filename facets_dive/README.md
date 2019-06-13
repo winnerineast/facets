@@ -41,6 +41,8 @@ If the values on your objects are complex (like arrays, or nested objects), thes
 By default, Dive will render text onto a circle to represent each data point.
 However, you can supply a sprite atlas that it can use instead.
 
+We have provided a utility called *facets atlasmaker* that can be used for creating your own sprite atlas, given a list of image locations. Please see its [documentation](../facets_atlasmaker/) for more details.
+
 A sprite atlas is one big image containing many tiny images at predictable coordinates.
 Starting from the top-left hand corner of the image, sprites proceed across and down, from left-to-right and from top-to-bottom.
 
@@ -126,7 +128,7 @@ This feature will likely be drastically changed or removed in the future.
 
 By default, Dive will arrange items within each cell of the grid by stacking them.
 Alternatively, the items can be placed in a scatter plot.
-This is most useful when Faceting is set to `<NONE>`.
+This is most useful when Faceting is set to `(none)`.
 
 Features with numeric values can be used for scatter plot positioning.
 Any items whose value is not a number will still be shown, but the value will be coerced to zero.
@@ -257,6 +259,13 @@ These optional properties control various stylistic aspects of Dive.
   Label color for item positioning in the horizontal direction.
   If not provided, a reasonable default will be set.
   (Use `item-positioning-horizontal-label-color` in HTML).
+* `fitGridAspectRatioToViewport` - `boolean` -
+  When laying out items in a grid, if this property is set, then the
+  visualization will attempt to match the aspect ratio of the available
+  on-screen space. For example, on a very wide screen, you would expect the grid
+  to also be wide. When this property is not set, then the visualization will
+  lay the grid items out using the default aspect ratio, a square.
+  (Use `fit-grid-aspect-ratio-to-viewport` in HTML).
 
 ### Interactive Properties
 
@@ -306,4 +315,11 @@ These are typically controlled by the user, but can also be set programatically 
 * `infoRenderer?` - `(dataObject: {}, containerElem: Element) => void` -
   Callback function to use to render the content of a data object for the info pane.
   If not specified, the `FacetsDiveInfoCard.defaultInfoRenderer` will be used.
-
+* `comparedIndices` - `Array<number>` -
+  Property listing indices of data objects to compare to the selected ones.
+  Set this programatically, will automatically update `comparedData` to match.
+* `comparedData` - `Array<{}>` -
+  READ ONLY.
+  Data objects to be compared to the selected objects.
+  They will all be elements of the data array.
+  Changed automatically in response to changes to `comparedIndices`.
