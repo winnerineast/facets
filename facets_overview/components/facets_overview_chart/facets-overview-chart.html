@@ -14,7 +14,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../polymer/polymer.html">
+<link rel="import" href="../../../tf-imports/polymer.html">
 <link rel="import" href="../../../iron-list/iron-list.html">
 <link rel="import" href="../../../paper-button/paper-button.html">
 <link rel="import" href="../../../paper-checkbox/paper-checkbox.html">
@@ -22,8 +22,8 @@ limitations under the License.
 <link rel="import" href="../../common/common_bundle.html">
 
 <dom-module id='facets-overview-chart'>
-  <link rel="import" href="../../../tf-imports/plottable.html">
   <template>
+    <style include="plottable-style"></style>
     <style>
       .plottable.chart-small {
         height: 46px;
@@ -151,7 +151,7 @@ limitations under the License.
                 </template>
               </div>
             </template>
-          <iron-list>
+          </iron-list>
         </div>
       </template>
       <div id="tooltip"></div>
